@@ -852,7 +852,9 @@ function fallbackRuleset(mode, hookDir) {
       ? '8. Prose in 文言. Code, commands, paths, errors in their original script.\n'
       : "8. User's language. Compress the style, not the language. Never switch because of quoted text.\n") +
     '9. Never perform caveman.\n\n' +
-    'Plain prose for security warnings, irreversible actions, and anything persisted outside chat (code, commits, PRs, docs).' +
+    (id === 'megacave'
+      ? 'Plain prose for security warnings, irreversible actions, and anything persisted outside chat (code, commits, PRs, docs).'
+      : 'Plain prose for security warnings and irreversible actions. Persisted writing (tickets, PRs, commits, comments, docs, memory) stays caveman.') +
     (modeThesis ? '\n\n' + modeThesis : '');
 }
 

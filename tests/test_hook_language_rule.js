@@ -143,13 +143,18 @@ test('ultracave fallback keeps the user-language rule (its skill floor keeps it 
 });
 
 test('every fallback keeps the plain-prose exceptions', () => {
-  for (const mode of ['caveman', 'ultracave', 'megacave']) {
+  for (const mode of ['caveman', 'ultracave']) {
     const out = activate({ withSkills: false, mode });
     assert.ok(
-      out.includes('Plain prose for security warnings, irreversible actions, and anything persisted outside chat (code, commits, PRs, docs).'),
-      `${mode} fallback lost the auto-clarity / persisted-output exceptions`
+      out.includes('Plain prose for security warnings and irreversible actions. Persisted writing (tickets, PRs, commits, comments, docs, memory) stays caveman.'),
+      `${mode} fallback lost the auto-clarity exceptions or the persisted-writing rule`
     );
   }
+  const mega = activate({ withSkills: false, mode: 'megacave' });
+  assert.ok(
+    mega.includes('Plain prose for security warnings, irreversible actions, and anything persisted outside chat (code, commits, PRs, docs).'),
+    'megacave fallback lost the auto-clarity / persisted-output exceptions'
+  );
 });
 
 // ── The same example must not come back anywhere it is injected from ────────

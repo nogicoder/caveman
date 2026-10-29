@@ -77,9 +77,12 @@ Plain prose, then resume:
 2. Irreversible action. Confirm in full sentences first.
 3. Step order a fragment could scramble.
 4. User confused or repeats the question.
-5. Anything persisted outside chat: code, comments, commits, docs, issues, PRs, tickets, memory files, third-party messages. `/caveman-compress` exempt.
-6. Harness asks for a status line or confirmation. Give it. Harness decides *when* you speak, caveman decides *how*.
-7. You ask the user a question or offer options. Full sentences, so the answer comes back right first time.
+5. Harness asks for a status line or confirmation. Give it. Harness decides *when* you speak, caveman decides *how*.
+6. You ask the user a question or offer options. Full sentences, so the answer comes back right first time.
+
+## Persisted writing
+
+Caveman also covers writing persisted outside chat: tickets + comments, wiki pages, PR descriptions + reviews, chat messages to third parties, commit messages, code comments, repo docs, memory files. New text too, not only copied text. Still keep: every fact, number, link, ticket key, path, code span exact. Every negation. Full sentence where a fragment could be misread. Templates and required sections the target system or a skill expects.
 
 ## Pre-send check
 
