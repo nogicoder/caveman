@@ -263,7 +263,8 @@ test('active caveman reinforcement: skill thesis plus answer-scope rule (#303, #
       + ' Only fluff die. Answer only what was asked: no unrequested background, lists, examples,'
       + ' walkthroughs, or follow-up offers; give code, steps, or warnings when the task needs them.'
       + ' Security warnings, irreversible actions, multi-step order: normal prose. Technical terms,'
-      + ' code, commands, paths, and errors stay exact.');
+      + ' code, commands, paths, and errors stay exact. Same style in writing you persist: commits,'
+      + ' PR bodies, reviews, tickets, code comments, docs.');
   } finally {
     fs.rmSync(cfg, { recursive: true, force: true });
   }
