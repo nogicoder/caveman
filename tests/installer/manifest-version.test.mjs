@@ -41,9 +41,22 @@ function releaseVersion() {
   return pkg.version;
 }
 
+// Fork (nogicoder/caveman): Claude plugin version moves alone. `claude plugin
+// update` skips a commit whose manifest version is unchanged, and a full release
+// bump would point install.sh, PINNED_REF and binary pins at upstream tags that
+// do not exist. Upstream release pins stay on package.json.
+test('.claude-plugin/plugin.json is at or ahead of the release version', () => {
+  const version = readJson('.claude-plugin/plugin.json').version;
+  assert.ok(version, '.claude-plugin/plugin.json declares no version (#321)');
+  assert.match(version, SEMVER);
+  const parts = (v) => v.split(/[-+]/)[0].split('.').map(Number);
+  const [a, b] = [parts(version), parts(releaseVersion())];
+  const cmp = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  assert.ok(cmp >= 0, `.claude-plugin/plugin.json ${version} behind package.json ${releaseVersion()}`);
+});
+
 // Manifests a host reads to tell the user which caveman they are running.
 const HOST_MANIFESTS = [
-  '.claude-plugin/plugin.json',
   '.cursor-plugin/plugin.json',
   'gemini-extension.json',
   'plugins/caveman/.codex-plugin/plugin.json',
