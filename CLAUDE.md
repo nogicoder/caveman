@@ -215,7 +215,7 @@ The old steps that mirrored SKILL.md and rules into root dotdirs (`.cursor/`, `.
 
 ## Hook system (Claude Code)
 
-Four hooks in `src/hooks/` plus a `caveman-config.js` shared module, a `caveman-parse.js` shared mode-change parser and a `package.json` CommonJS marker.
+Five hooks in `src/hooks/` (the fifth, `caveman-gate.js`, is plugin-only) plus a `caveman-config.js` shared module, a `caveman-lint.js` pure linter, a `caveman-parse.js` shared mode-change parser and a `package.json` CommonJS marker.
 
 **Mode state is per session.** Each session's mode lives in `$CLAUDE_CONFIG_DIR/.caveman-sessions/<session_id>.mode`, keyed by the `session_id` Claude Code puts in every hook payload *and* in the statusline's stdin JSON. `$CLAUDE_CONFIG_DIR/.caveman-active` survives as a last-write-wins compat mirror (falls back to `~/.claude/`).
 
@@ -248,6 +248,7 @@ All hooks honor `CLAUDE_CONFIG_DIR` for non-default Claude Code config locations
 Exports:
 - `getDefaultMode()` — resolves default mode in order: `CAVEMAN_DEFAULT_MODE` env var → repo-local config (`<cwd>/.caveman/config.json` or `<cwd>/.caveman.json`, walking up to the filesystem root; the first file that names a `defaultMode` wins, so a CLI-only `.caveman/config.json` does not hide a `.caveman.json`) → user config (`$XDG_CONFIG_HOME/caveman/config.json` / `~/.config/caveman/config.json` / on Windows `%APPDATA%\caveman\config.json`, then `~/.config/caveman/config.json`) → `'caveman'`. Config files may carry a BOM, be UTF-16LE, or hold comments and trailing commas. The env var short-circuits before any cwd walk. Repo-local config lets a team check in a per-project default without polluting every contributor's env or user config.
 - `getReinforce(startDir)` — whether the UserPromptSubmit hook emits its per-turn reminder (#1468). Same sources, same order, same "first file that names it wins" rule as `getDefaultMode` (both go through `resolveSetting`): `CAVEMAN_REINFORCE` (`0`/`false`/`off`/`no` or `1`/`true`/`on`/`yes`) → repo-local `reinforce` → user-config `reinforce` → `true`. Off drops only the reminder: SessionStart's ruleset and a mid-session switch's ruleset still inject. Not mirrored in opencode, whose system-prompt transform is the ruleset delivery itself, not a repeat.
+- `getGate(startDir)` — lint-gate strength, `off | warn | enforce`, default `enforce`. `CAVEMAN_GATE` → repo-local `gate` → user-config `gate`, through `resolveSetting` like `getReinforce`.
 - `findRepoConfigPath(start, accept)` — walks up from `start` (default `process.cwd()`) looking for the first `.caveman/config.json` or `.caveman.json` (that `accept(path)` approves, when given). Bounded to 64 ancestors. Refuses symlinked files (symmetric with `safeWriteFlag` / `readFlag`).
 - `safeWriteFlag(flagPath, content)` — symlink-safe flag write. Refuses if flag target or its immediate parent is a symlink. Opens with `O_NOFOLLOW` where supported. Atomic temp + rename. Creates with `0600`. Protects against local attackers replacing the predictable flag path with a symlink to clobber files writable by the user. Used by both write hooks. Silent-fails on all filesystem errors.
 - `validateSessionId(id)` — returns the id or `null`. Whitelist `^[A-Za-z0-9_-]{1,128}$`. **A session id becomes part of a filesystem path, so nothing may interpolate one without passing it through here first.** The symlink hardening in `safeWriteFlag` does not cover traversal.
@@ -294,6 +295,18 @@ Reads JSON from stdin — `session_id` scopes every read and write. Three respon
 **2. Natural-language activation/deactivation.** Matches phrases like "activate caveman", "turn on caveman mode", "talk like caveman" and writes the configured default mode. Matches "stop caveman", "disable caveman", "normal mode", "deactivate caveman" etc. and stores a durable `off` for the session. README promises these triggers, the hook enforces them.
 
 **3. Per-turn reinforcement.** When the session's mode is a non-independent one (i.e. not `commit`/`review`/`compress`), emits a small `hookSpecificOutput` JSON reminder so the model keeps caveman style after other plugins inject competing instructions mid-conversation. The full ruleset still comes from SessionStart — this is just an attention anchor. `reinforce: false` / `CAVEMAN_REINFORCE=0` (`getReinforce`) turns the reminder off; it never gates the ruleset a mid-session switch carries (#975).
+
+### `src/hooks/caveman-gate.js` + `caveman-lint.js` — PreToolUse / Stop lint gate
+
+Reminders do not hold, so this checks output. Registered in `.claude-plugin/plugin.json` only (matcher `Bash|Write|Edit|mcp__.*` for PreToolUse, plus Stop; timeout 5). The standalone installer does not wire it.
+
+- `caveman-lint.js`: pure `lint(text, opts?) -> { words, violations }`, `Violation = { rule: 'ceremony' | 'articles' | 'long-sentence', excerpt, detail }`. Strips code, URLs, table/heading/quote lines, double-quoted spans, trailers first. Under 80% ASCII letters: no violations. `articles` and `long-sentence` need 25+ words. Reports only; never edits text
+- `caveman-gate.js`: one `SINKS` table of `{ id, match, extract, action }`: `git-commit`, `gh-pr`, `gh-issue`, `gh-api`, `mcp-write` (deny); `doc-file`, `chat` (feedback). Add a sink by adding a row, never a conditional. Bash rows match by regex first and exit before touching config. Stop runs through the same table as pseudo-tool `#stop`
+- Active only when `resolveActiveMode` is `caveman` or `ultracave` and `getGate()` is not `off` (`CAVEMAN_GATE` / `gate`: `off | warn | enforce`, default `enforce`; `warn` turns deny into feedback). A session without a valid id is never gated
+- `deny`: `permissionDecision: "deny"` JSON on stdout, exit 0, never exit 2. The third consecutive attempt for a sink passes and resets `.caveman-sessions/<id>.gate`, so a false positive cannot deadlock work. A clean pass resets it
+- `feedback`: writes `.caveman-sessions/<id>.lint` (`{ sink, violations }`, latest only). The tracker appends one `Last <sink> broke caveman: ...` sentence to the next per-turn reminder and clears the record. Needs `reinforce` on
+- State helpers (`readSessionLint`/`writeSessionLint`/`clearSessionLint`, `readSessionGate`/`writeSessionGate`) live in `caveman-config.js`; `gcSessionStore` already sweeps both files because it expires every regular file in the sessions dir by mtime
+- Stdin follows the tracker contour. `tests/hooks/lint-gate.test.mjs` covers it, keep-the-writer-open case included
 
 ### `src/hooks/caveman-statusline.sh` — Statusline badge
 

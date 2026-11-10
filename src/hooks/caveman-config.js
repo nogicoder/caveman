@@ -235,6 +235,32 @@ function getReinforce(startDir) {
   return value !== false;
 }
 
+const GATE_VALUES = ['off', 'warn', 'enforce'];
+
+function parseGate(raw) {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().toLowerCase();
+  return GATE_VALUES.includes(v) ? v : null;
+}
+
+function readGateFromConfigFile(configPath) {
+  try {
+    const config = parseConfigFile(configPath);
+    return config && typeof config === 'object' ? parseGate(config.gate) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// How hard the PreToolUse/Stop lint gate (caveman-gate.js) pushes: `enforce`
+// denies a persisted write that breaks caveman, `warn` only feeds the breach
+// back on the next turn, `off` disables the gate. Same sources and order as
+// getReinforce; default enforce.
+function getGate(startDir) {
+  return resolveSetting(parseGate(process.env.CAVEMAN_GATE), readGateFromConfigFile, startDir)
+    || 'enforce';
+}
+
 // Symlink-safe flag file write.
 // Uses O_NOFOLLOW where available, writes atomically via temp + rename with
 // 0600 permissions. Protects against local attackers replacing the predictable
@@ -704,6 +730,84 @@ function clearSessionPrev(claudeDir, sessionId) {
   safeDeleteFlag(path.join(claudeDir, PREV_BASENAME));
 }
 
+// Lint-gate state (caveman-gate.js), one pair of files per session:
+//   <id>.lint  latest breach record  { sink, violations }   (read once by the tracker)
+//   <id>.gate  consecutive denials   { [sinkId]: count }     (releases a stuck sink)
+// Both live in the sessions dir, so gcSessionStore's mtime sweep already
+// covers them: it removes every regular file there, whatever its extension.
+// A session without a valid id gets no gate state at all (null path).
+const MAX_STATE_BYTES = 8192;
+
+function sessionLintPath(claudeDir, sessionId) {
+  return sessionStatePath(claudeDir, sessionId, '.lint');
+}
+
+function sessionGatePath(claudeDir, sessionId) {
+  return sessionStatePath(claudeDir, sessionId, '.gate');
+}
+
+function readStateJson(filePath) {
+  if (!filePath) return null;
+  try {
+    const st = fs.lstatSync(filePath);
+    if (st.isSymbolicLink() || !st.isFile() || st.size > MAX_STATE_BYTES) return null;
+    const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
+    const fd = fs.openSync(filePath, fs.constants.O_RDONLY | O_NOFOLLOW);
+    try {
+      const buf = Buffer.alloc(st.size);
+      const n = fs.readSync(fd, buf, 0, st.size, 0);
+      return JSON.parse(buf.slice(0, n).toString('utf8'));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeStateJson(filePath, value) {
+  if (!filePath) return;
+  const text = JSON.stringify(value);
+  if (Buffer.byteLength(text) <= MAX_STATE_BYTES) safeWriteFlag(filePath, text);
+}
+
+function readSessionLint(claudeDir, sessionId) {
+  const rec = readStateJson(sessionLintPath(claudeDir, sessionId));
+  if (!rec || typeof rec.sink !== 'string' || !Array.isArray(rec.violations)) return null;
+  const violations = rec.violations
+    .filter((v) => v && typeof v.rule === 'string' && typeof v.excerpt === 'string')
+    .map((v) => ({ rule: v.rule, excerpt: v.excerpt, detail: typeof v.detail === 'string' ? v.detail : '' }));
+  return violations.length ? { sink: rec.sink, violations } : null;
+}
+
+function writeSessionLint(claudeDir, sessionId, record) {
+  writeStateJson(sessionLintPath(claudeDir, sessionId), record);
+}
+
+function clearSessionLint(claudeDir, sessionId) {
+  const p = sessionLintPath(claudeDir, sessionId);
+  if (p) safeDeleteFlag(p);
+}
+
+function readSessionGate(claudeDir, sessionId) {
+  const raw = readStateJson(sessionGatePath(claudeDir, sessionId));
+  const counts = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [sink, n] of Object.entries(raw)) {
+      if (Number.isInteger(n) && n > 0) counts[sink] = n;
+    }
+  }
+  return counts;
+}
+
+// An empty table deletes the file, so a clean session leaves nothing behind.
+function writeSessionGate(claudeDir, sessionId, counts) {
+  const p = sessionGatePath(claudeDir, sessionId);
+  if (!p) return;
+  if (Object.keys(counts).length === 0) safeDeleteFlag(p);
+  else writeStateJson(p, counts);
+}
+
 // Sweep stale per-session files. Called from SessionStart on a genuinely new
 // session only — not on every compaction, which is frequent in a long session
 // and would spend the 5s hook budget on directory walks.
@@ -885,7 +989,7 @@ function fallbackRuleset(mode, hookDir) {
     '1. Answer first.\n' +
     '2. Kill ceremony.\n' +
     '3. Short word.\n' +
-    '4. Articles optional, meaning never.\n' +
+    '4. Drop articles, never meaning.\n' +
     '5. One idea per sentence.\n' +
     '6. Payload verbatim.\n' +
     '7. Tool runs: bounded status.\n' +
@@ -906,7 +1010,7 @@ function rulesetBanner(mode) {
 }
 
 module.exports = {
-  getDefaultMode, getReinforce, getConfigDir, getConfigPath, findRepoConfigPath, VALID_MODES,
+  getDefaultMode, getReinforce, getGate, GATE_VALUES, getConfigDir, getConfigPath, findRepoConfigPath, VALID_MODES,
   parseConfigFile,
   canonicalMode,
   safeWriteFlag, safeDeleteFlag, readFlag, appendFlag, readHistory,
@@ -917,6 +1021,7 @@ module.exports = {
   sessionActivePath, sessionPrevPath,
   resolveActiveMode, readSessionModeRaw, writeSessionMode,
   writeSessionPrev, readSessionPrev, clearSessionPrev,
+  readSessionLint, writeSessionLint, clearSessionLint, readSessionGate, writeSessionGate,
   gcSessionStore,
   // Ruleset injection
   skillPathCandidates, loadRuleset, thesisLine, rulesetBanner, fallbackRuleset,

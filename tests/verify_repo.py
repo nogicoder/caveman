@@ -371,6 +371,8 @@ def verify_manifests_and_syntax() -> None:
     )
 
     hook_dir = ROOT / "src/hooks"
+    # The manifest is the standalone installer's download list. caveman-gate.js
+    # and caveman-lint.js ship through the plugin manifest only, so they stay out.
     expected_hooks = {
         "package.json",
         "caveman-config.js",
@@ -398,6 +400,8 @@ def verify_manifests_and_syntax() -> None:
     run(["node", "--check", "src/hooks/caveman-mode-tracker.js"])
     run(["node", "--check", "src/hooks/cavecrew-model-overrides.js"])
     run(["node", "--check", "src/hooks/caveman-host-session-start.js"])
+    run(["node", "--check", "src/hooks/caveman-lint.js"])
+    run(["node", "--check", "src/hooks/caveman-gate.js"])
     run(["node", "--check", "installer/install.js"])
     run(["node", "--check", "installer/lib/settings.js"])
     bash = shutil.which("bash")

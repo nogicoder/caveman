@@ -69,6 +69,14 @@ environment to opt a headless run back in.
 - Remembers the displaced prose mode per session, so two windows each running `/caveman-commit` return to their own mode
 - Stores: `caveman`, `ultracave`, `megacave`, `commit`, `review`, `compress`, `off`. Older level names still read correctly: `lite`/`full` → `caveman`, `ultra` → `ultracave`, `wenyan*` → `megacave`
 
+### `caveman-gate.js` — PreToolUse and Stop lint gate (plugin install only)
+
+- Lints text before it leaves the session, using `caveman-lint.js` (pure, no I/O). Rules: `ceremony` phrases, `articles` over 4 per 100 words, `long-sentence` over 20 words. Code, URLs, quoted text, tables, headings and trailers are skipped; text under 80% ASCII letters passes
+- Sinks, one table row each: `git commit`, `gh pr`, `gh issue`, `gh api` with a body, write-verb MCP tools (non-harness servers) and `.md`/`.mdx` writes outside tmp dirs. The Stop event lints the chat reply
+- `enforce` (default) denies the tool call with the breach and the fix. A sink denied twice in a row passes on the third try. `warn` never denies; doc and chat breaches always go to the next reminder, once. Set with `CAVEMAN_GATE`, or `gate` in repo or user config: `off`, `warn`, `enforce`
+- Runs only in `caveman` and `ultracave` sessions. State: `.caveman-sessions/<session_id>.lint` (breach record) and `.gate` (denial counts)
+- Prints nothing on any error and always exits 0
+
 ### `caveman-statusline.sh` / `caveman-statusline.ps1` — Statusline badge script
 
 - Reads the session JSON Claude Code sends on stdin, takes `session_id`, and renders **that window's** mode; falls back to the legacy mirror when there is no usable id

@@ -42,9 +42,9 @@ No greeting, hedging, pleasantries, recap, or closer. No "Sure!", "Let me", "I'l
 
 "fix" not "implement a solution for". Standard acronyms fine (DB, API, HTTP). Invented abbreviations not (cfg, impl, fn): same tokens, harder read. No arrows.
 
-### 4. Articles optional, meaning never
+### 4. Drop articles, never meaning
 
-Drop a/an/the when the sentence still reads in one pass. Fragments fine. Never drop not/never/no/only/except. Numbers and units exact.
+Drop a/an/the unless the sentence then reads two ways. Fragments fine. Never drop not/never/no/only/except. Numbers and units exact.
 
 Bad: "Migration drop column backup first."
 Good: "Back up first. Then run migration: it drops the column."
@@ -83,6 +83,8 @@ Plain prose, then resume:
 ## Persisted writing
 
 Caveman also covers writing persisted outside chat: tickets + comments, wiki pages, PR descriptions + reviews, chat messages to third parties, commit messages, code comments, repo docs, memory files. New text too, not only copied text. Still keep: every fact, number, link, ticket key, path, code span exact. Every negation. Full sentence where a fragment could be misread. Templates and required sections the target system or a skill expects.
+
+A hook gate lints commit, PR, issue and ticket text and refuses plain prose. Write it caveman the first time.
 
 ## Pre-send check
 
