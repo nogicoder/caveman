@@ -100,6 +100,10 @@ const thesisLine = cfg.thesisLine
 // The reinforcement switch (#1468). A caveman-config.js predating it keeps
 // reinforcing, which is what that copy always did.
 const getReinforce = cfg.getReinforce || (() => true);
+// Breach record the lint gate (caveman-gate.js) left for this session. A
+// caveman-config.js without the gate helpers just never reports one.
+const readSessionLint = cfg.readSessionLint || (() => null);
+const clearSessionLint = cfg.clearSessionLint || (() => {});
 const { parseModeChange, INDEPENDENT_MODES } = requireSibling('caveman-parse', (m) =>
   m && typeof m.parseModeChange === 'function' && m.INDEPENDENT_MODES instanceof Set) || {
   parseModeChange: () => null,
@@ -123,6 +127,14 @@ function reinforcementForMode(mode) {
     ' normal prose. Technical terms, code, commands, paths, and errors stay exact.' +
     ' Same style in writing you persist: commits, PR bodies, reviews, tickets,' +
     ' code comments, docs.';
+}
+
+// One sentence telling the model what its last persisted write or reply got
+// wrong, capped so it never crowds the reminder.
+function breachNote(record) {
+  const found = record.violations.map((v) => v.rule + ': ' + v.excerpt.replace(/\s+/g, ' ').slice(0, 70)).join('; ');
+  const note = 'Last ' + record.sink + ' broke caveman: ' + found;
+  return (note.length > 270 ? note.slice(0, 269) + '\u2026' : note) + '. Fix from this reply on.';
 }
 
 function removeFlag(path) {
@@ -378,9 +390,16 @@ function handle(raw) {
     // #1468: `reinforce: false` / CAVEMAN_REINFORCE=0 drops only the per-turn
     // reminder. It is not a caveman off switch, so it does not gate the
     // switch ruleset below — a switch without its rules is #975 again.
-    const reinforce = prose && getReinforce(data.cwd)
+    let reinforce = prose && getReinforce(data.cwd)
       ? reinforcementForMode(activeMode)
       : null;
+    if (reinforce) {
+      const breach = readSessionLint(claudeDir, sessionId);
+      if (breach) {
+        reinforce += ' ' + breachNote(breach);
+        clearSessionLint(claudeDir, sessionId);
+      }
+    }
 
     // A mode switch has to carry the new mode's RULES, not just relabel the
     // banner (#975). SessionStart injected exactly one skill body and it is

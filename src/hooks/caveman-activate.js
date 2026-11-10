@@ -366,7 +366,7 @@ const fallbackRuleset = cfg.fallbackRuleset || ((m) => {
     '1. Answer first.\n' +
     '2. Kill ceremony.\n' +
     '3. Short word.\n' +
-    '4. Articles optional, meaning never.\n' +
+    '4. Drop articles, never meaning.\n' +
     '5. One idea per sentence.\n' +
     '6. Payload verbatim.\n' +
     '7. Tool runs: bounded status.\n' +
