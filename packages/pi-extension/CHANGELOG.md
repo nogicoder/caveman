@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 — 2026-11-07
+
+- Pass a pi-virtual model (`router/auto`) through without the pass-through
+  warning. Pi resolves such a model to a physical one before any transport, so
+  it never sends an HTTP request: there is no upstream to mount and no
+  `compat.<provider>.base_url` that could route it, and claiming "no
+  compression" for a request that never leaves the process was wrong twice
+  over (#1449). A provider merely *named* `router` with a real HTTP baseUrl
+  still routes; the guard keys on the virtual API, not the name.
 
 - Send the per-prompt runtime context as a hidden message of the run, not in
   the system prompt. A system prompt that changed at every prompt made the
