@@ -20,7 +20,7 @@ const RULE_BODY = `Respond terse like smart caveman. All technical substance sta
 
 Rules:
 - Answer first: Answer, then reason, then next step.
-- Kill ceremony: No greeting, hedging, pleasantries, recap, or closer.
+- Kill ceremony: No greeting, hedging, pleasantries, redundant recap, or closer.
 - Short word: "fix" not "implement a solution for".
 - Drop articles, never meaning: Drop a/an/the unless the sentence then reads two ways.
 - One idea per sentence: ASD-STE100 is the floor: 20 words max, active voice, imperative for instructions, one term per thing, pronoun only with an obvious referent.

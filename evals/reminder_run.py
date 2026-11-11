@@ -24,7 +24,14 @@ machine running this cannot inject its own ruleset into any arm.
 Run sequentially on purpose: parallel `claude -p` calls have been seen to
 drop installed plugins from settings.json on the host machine.
 
+--prompts evals/prompts/written.txt swaps in writing tasks (wiki page,
+recap, PR body, Slack message, closing message after tool work): the
+outputs the lint gate guards. --lint adds a per-arm count of caveman-lint
+breaches by rule to the snapshot, so a reminder change shows up as fewer
+articles / ceremony / long-sentence hits, not just fewer tokens.
+
 Run:  CAVEMAN_EVAL_MODEL=claude-opus-5-5 python evals/reminder_run.py
+      python evals/reminder_run.py --prompts evals/prompts/written.txt --lint
       uv run --with tiktoken python evals/measure.py \\
           evals/snapshots/reminder.json
 """
@@ -111,12 +118,36 @@ def run(prompt: str, system: str | None = None,
     return out.stdout.strip()
 
 
+def lint_counts(texts: list[str]) -> dict:
+    """Breaches per rule over one arm's outputs, from src/hooks/caveman-lint.js."""
+    script = (
+        "const {lint}=require(process.argv[1]);"
+        "const texts=JSON.parse(require('fs').readFileSync(0,'utf8'));"
+        "const c={outputs:texts.length,breached:0,articles:0,ceremony:0,'long-sentence':0};"
+        "for(const t of texts){const v=lint(t).violations;if(v.length)c.breached++;"
+        "for(const x of v)c[x.rule]++;}"
+        "process.stdout.write(JSON.stringify(c));"
+    )
+    out = subprocess.run(
+        ["node", "-e", script, str((HOOKS / "caveman-lint.js").resolve())],
+        input=json.dumps(texts), capture_output=True, text=True, check=True,
+        encoding="utf-8",
+    )
+    return json.loads(out.stdout)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--base", default="origin/main",
                     help="git ref holding the tracker to compare against")
     ap.add_argument("--levels", default="full",
                     help="comma-separated caveman levels, e.g. full,ultra")
+    ap.add_argument("--prompts", default=str(PROMPTS),
+                    help="prompt file, one prompt per line")
+    ap.add_argument("--lint", action="store_true",
+                    help="add per-arm caveman-lint breach counts")
+    ap.add_argument("--out", default=str(SNAPSHOT),
+                    help="snapshot path to write")
     args = ap.parse_args()
     levels = [x for x in args.levels.split(",") if x]
 
@@ -130,7 +161,7 @@ def main() -> None:
         capture_output=True, text=True, check=True,
     ).stdout.strip()
 
-    prompts = [p.strip() for p in PROMPTS.read_text(encoding="utf-8")
+    prompts = [p.strip() for p in Path(args.prompts).read_text(encoding="utf-8")
                .splitlines() if p.strip()]
     skill_md = (SKILLS / "caveman" / "SKILL.md").read_text(encoding="utf-8")
     system = f"{TERSE_PREFIX}\n\n{skill_md}"
@@ -170,10 +201,17 @@ def main() -> None:
                 run(p, system=system, settings=settings) for p in prompts
             ]
 
-    SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
-    SNAPSHOT.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2),
+    if args.lint:
+        snapshot["lint"] = {arm: lint_counts(outs)
+                            for arm, outs in snapshot["arms"].items()}
+        for arm, counts in snapshot["lint"].items():
+            print(f"  {arm}: {counts}")
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2),
                         encoding="utf-8")
-    print(f"\nWrote {SNAPSHOT}")
+    print(f"\nWrote {out_path}")
 
 
 if __name__ == "__main__":

@@ -103,7 +103,6 @@ const getReinforce = cfg.getReinforce || (() => true);
 // Breach record the lint gate (caveman-gate.js) left for this session. A
 // caveman-config.js without the gate helpers just never reports one.
 const readSessionLint = cfg.readSessionLint || (() => null);
-const clearSessionLint = cfg.clearSessionLint || (() => {});
 const { parseModeChange, INDEPENDENT_MODES } = requireSibling('caveman-parse', (m) =>
   m && typeof m.parseModeChange === 'function' && m.INDEPENDENT_MODES instanceof Set) || {
   parseModeChange: () => null,
@@ -124,9 +123,10 @@ function reinforcementForMode(mode) {
     ' Answer only what was asked: no unrequested background, lists, examples,' +
     ' walkthroughs, or follow-up offers; give code, steps, or warnings when the' +
     ' task needs them. Security warnings, irreversible actions, multi-step order:' +
-    ' normal prose. Technical terms, code, commands, paths, and errors stay exact.' +
-    ' Same style in writing you persist: commits, PR bodies, reviews, tickets,' +
-    ' code comments, docs.';
+    ' full sentences where meaning needs them, still no filler. Technical terms, code,' +
+    ' commands, paths, and errors stay exact. Same style in every written output:' +
+    ' chat, recaps, commits, PR bodies, reviews, tickets, wiki pages, messages,' +
+    ' code comments, docs, memory.';
 }
 
 // One sentence telling the model what its last persisted write or reply got
@@ -395,10 +395,10 @@ function handle(raw) {
       : null;
     if (reinforce) {
       const breach = readSessionLint(claudeDir, sessionId);
-      if (breach) {
-        reinforce += ' ' + breachNote(breach);
-        clearSessionLint(claudeDir, sessionId);
-      }
+      // The note stays until the gate sees a clean pass for that sink and
+      // clears it. Clearing it here, after one reminder, let the same breach
+      // repeat for free.
+      if (breach) reinforce += ' ' + breachNote(breach);
     }
 
     // A mode switch has to carry the new mode's RULES, not just relabel the

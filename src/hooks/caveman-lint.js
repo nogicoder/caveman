@@ -9,7 +9,8 @@
 //
 // What counts as prose: everything left after fenced code, inline code, URLs,
 // table rows, headings, blockquotes, double-quoted spans (quoted errors are
-// payload), git trailers and the "Generated with" footer are removed.
+// payload), git trailers and the "Generated with" footer are removed. HTML
+// (Confluence bodies, Artifact pages) is turned into those same lines first.
 
 const LIMITS = {
   minWords: 25,
@@ -72,8 +73,31 @@ function dropTrailers(lines) {
   return out;
 }
 
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+
+// HTML to the line shapes strip() already knows. Only runs on text with two
+// or more tags, so a stray "<sha>" in a commit body stays prose. Code, tables,
+// scripts and comments go; headings become "# " lines that strip() drops;
+// block ends become line breaks so paragraphs never join into one sentence.
+function htmlToText(text) {
+  if ((text.match(/<\/?[a-z][\w:-]*[\s>\/]/gi) || []).length < 2) return text;
+  return text
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, ' ')
+    .replace(/<(script|style|pre|code|table|svg)\b[\s\S]*?<\/\1\s*>/gi, '\n')
+    .replace(/<ac:structured-macro\b[^>]*ac:name="code"[\s\S]*?<\/ac:structured-macro>/gi, '\n')
+    .replace(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>/gi, (m, inner) => '\n# ' + inner.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ') + '\n')
+    .replace(/<li\b[^>]*>/gi, '\n- ')
+    .replace(/<(?:br|hr)\b[^>]*>|<\/(?:p|div|li|ul|ol|section|blockquote|tr|td|th|details|summary)\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(#?\w+);/g, (m, name) => (ENTITIES[name.toLowerCase()] != null ? ENTITIES[name.toLowerCase()]
+      : /^#\d+$/.test(name) ? String.fromCodePoint(Number(name.slice(1))) : m))
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n');
+}
+
 function strip(text) {
-  let lines = stripFences(String(text).replace(/\r\n?/g, '\n').split('\n'));
+  let lines = stripFences(htmlToText(String(text).replace(/\r\n?/g, '\n')).split('\n'));
   lines = dropTrailers(lines).filter((l) => !/^\s{0,3}#{1,6}(\s|$)/.test(l) && !/^\s*>/.test(l) && !/^\s*\|/.test(l));
   return lines.join('\n')
     .replace(/`[^`\n]*`/g, ' ')
@@ -163,6 +187,16 @@ function lint(text, opts) {
     if (hit) violations.push({ rule: 'ceremony', excerpt: clip(hit, 100), detail: `ceremony phrase "${phrase}"` });
   }
 
+  let longCount = 0;
+  for (const s of sentences) {
+    const n = countWords(s);
+    if (n <= limits.sentenceWords) continue;
+    if (longCount++ >= limits.maxSentenceViolations) break;
+    violations.push({ rule: 'long-sentence', excerpt: clip(s, 110), detail: `${n} words (limit ${limits.sentenceWords})` });
+  }
+
+  // Article density needs a sample: a one-line reply with two "the" is not a
+  // trend. A single overlong sentence is a breach at any length.
   if (words < limits.minWords) return { words, violations };
 
   const articles = sentences.reduce((n, s) => n + countArticles(s), 0);
@@ -182,15 +216,7 @@ function lint(text, opts) {
     });
   }
 
-  let longCount = 0;
-  for (const s of sentences) {
-    const n = countWords(s);
-    if (n <= limits.sentenceWords) continue;
-    if (longCount++ >= limits.maxSentenceViolations) break;
-    violations.push({ rule: 'long-sentence', excerpt: clip(s, 110), detail: `${n} words (limit ${limits.sentenceWords})` });
-  }
-
   return { words, violations };
 }
 
-module.exports = { lint, strip, splitSentences, countWords, LIMITS };
+module.exports = { lint, strip, htmlToText, splitSentences, countWords, LIMITS };

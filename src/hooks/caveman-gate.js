@@ -26,9 +26,19 @@ const MAX_FILE_BYTES = 256 * 1024;
 const STOP = '#stop';
 
 const HARNESS_SERVER = /^(?:ccd_|Claude_|visualize$|terminal$|claude-in-chrome$|scheduled-tasks$|mcp-registry$)/;
-const WRITE_VERB = /^(?:create|edit|update|add|send|schedule|reply|forward|comment)/;
+// Prefix verbs match camel-split words ("createConfluencePage", "add_comment").
+// The second group matches whole words only: generic writers such as
+// Atlassian `executeWrite` or Docs `batch`. `execute` alone is not a verb, so
+// executeRead and executeDestructive stay out.
+const WRITE_VERB = /^(?:create|edit|update|add|send|schedule|reply|forward|comment)|^(?:write|post|publish|upsert|put|share|batch)$/;
 const PROSE_KEY = /^(?:body|comment\w*|description|text|message|content|summary|markdown)$/i;
-const TMP_PATH = /(?:^|[\\/])(?:tmp|temp|scratchpad)[\\/]|^\/var\/folders\//i;
+// Under a prose key, every string is prose except these: Confluence sends
+// body as {format, value}, storage bodies as {storage: {value, representation}}.
+const META_KEY = /^(?:format|representation|type|content_?type|id|key|version|status|language|local_?id|url|href)$/i;
+const MEMORY_DOC = /[\\/]memory[\\/][^\\/]+\.md$/i;
+// Scratch locations only: system tmp roots and agent scratchpads. A bare
+// "temp" segment is not one: a home dir named /Users/temp is a real repo home.
+const TMP_PATH = /^(?:\/private)?\/tmp\/|^\/var\/folders\/|[\\/]scratchpad[\\/]|[\\/]AppData[\\/]Local[\\/]Temp[\\/]/i;
 
 const GIT_COMMIT = /\bgit\b[^\n;&|]*?\scommit(?=\s|$)/;
 const GH_PR = /\bgh\s+pr\s+(?:create|edit|comment|review)\b/;
@@ -52,8 +62,31 @@ function isMcpWrite(tool) {
 }
 
 function isDocPath(file) {
-  return typeof file === 'string' && /\.mdx?$/i.test(file) && !TMP_PATH.test(file)
+  return typeof file === 'string' && /\.(?:mdx?|html?)$/i.test(file) && !TMP_PATH.test(file)
     && !file.startsWith(os.tmpdir() + path.sep);
+}
+
+function fileExists(file, cwd) {
+  try { return fs.statSync(path.resolve(cwd || process.cwd(), file)).isFile(); } catch (e) { return false; }
+}
+
+// Text a Write/Edit/MultiEdit adds. A Write over an existing file lints only
+// lines the old file lacks, so old prose never counts against a new write.
+function docText(tool, input, cwd) {
+  if (tool === 'MultiEdit') return (input.edits || []).map((e) => String((e && e.new_string) || '')).join('\n\n');
+  if (tool === 'Edit') return String(input.new_string || '');
+  const next = String(input.content || '');
+  const old = readCapped(input.file_path, cwd);
+  if (!old) return next;
+  const seen = new Set(old.split('\n').map((l) => l.trim()));
+  return next.split('\n').filter((l) => !seen.has(l.trim())).join('\n');
+}
+
+// New files and memory files are denied: once written, feedback is too late.
+// Edits to existing docs only get feedback, so a template a repo requires
+// never deadlocks the work.
+function docAction(input, cwd) {
+  return MEMORY_DOC.test(input.file_path) || !fileExists(input.file_path, cwd) ? 'deny' : 'feedback';
 }
 
 function unquote(value) {
@@ -137,21 +170,36 @@ function bashText(command, cwd, sinkRe) {
   return parts.filter(Boolean).join('\n\n');
 }
 
-// Every string stored under a prose-like key, at any depth.
-function proseFields(node, depth) {
+// Every string stored under a prose-like key, at any depth. Below a prose key
+// every string counts except META_KEY ones, so {body: {format, value}} lints
+// value and skips format.
+function proseFields(node, depth, inProse) {
   const level = depth || 0;
   if (!node || typeof node !== 'object' || level > 8) return '';
   const out = [];
   for (const [key, value] of Object.entries(node)) {
+    const prose = (inProse && !META_KEY.test(key)) || PROSE_KEY.test(key);
     if (typeof value === 'string') {
-      if (PROSE_KEY.test(key)) out.push(value);
+      if (prose) out.push(value);
     } else if (value && typeof value === 'object') {
-      const inner = proseFields(value, level + 1);
+      const inner = proseFields(value, level + 1, prose);
       if (inner) out.push(inner);
     }
   }
   return out.join('\n\n');
 }
+
+// Text the desktop app shows in its next-step box. Button labels are 1-3
+// words, so lint skips them in practice, but they ride along.
+function wrapUpText(input) {
+  if (!input) return '';
+  const labels = Array.isArray(input.actions) ? input.actions.map((a) => (a && a.label) || '') : [];
+  return [input.recap, input.ask, ...labels].filter((v) => typeof v === 'string' && v).join('\n\n');
+}
+
+const isArtifactPublish = (tool, input) => tool === 'Artifact' && !!input
+  && (!input.action || input.action === 'publish') && !input.asset
+  && /\.(?:html?|md)$/i.test(input.file_path || '');
 
 const SINKS = [
   { id: 'git-commit', action: 'deny',
@@ -166,12 +214,18 @@ const SINKS = [
   { id: 'gh-api', action: 'deny',
     match: (tool, input) => isBash(tool, input) && GH_API.test(input.command),
     extract: (input, cwd) => bashText(input.command, cwd, /\bgh\s+api\b/) },
+  { id: 'wrap-up', action: 'deny',
+    match: (tool) => tool === 'mcp__ccd_turn__wrap_up',
+    extract: (input) => wrapUpText(input) },
+  { id: 'artifact', action: 'deny',
+    match: (tool, input) => isArtifactPublish(tool, input),
+    extract: (input, cwd) => readCapped(input.file_path, cwd) },
   { id: 'mcp-write', action: 'deny',
     match: (tool) => isMcpWrite(tool),
     extract: (input) => proseFields(input) },
-  { id: 'doc-file', action: 'feedback',
-    match: (tool, input) => (tool === 'Write' || tool === 'Edit') && !!input && isDocPath(input.file_path),
-    extract: (input) => String(input.content != null ? input.content : input.new_string || '') },
+  { id: 'doc-file', action: docAction,
+    match: (tool, input) => (tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit') && !!input && isDocPath(input.file_path),
+    extract: (input, cwd, tool) => docText(tool, input, cwd) },
   { id: 'chat', action: 'feedback',
     match: (tool, input) => tool === STOP && !!input && typeof input.last_assistant_message === 'string',
     extract: (input) => input.last_assistant_message },
@@ -211,9 +265,38 @@ function lazyModules() {
   }
 }
 
+// PostToolUse after the desktop app's wrap_up: the closing message comes
+// next, many tool calls after the per-turn reminder. Recency is the point.
+const WRAP_UP = 'mcp__ccd_turn__wrap_up';
+const CLOSING_NOTE = 'Closing message next: caveman. Lead with result, not "I". At most 4 a/an/the'
+  + ' per 100 words, at most 20 words per sentence, no ceremony.';
+
+function closingReminder(data, mods) {
+  const { cfg } = mods;
+  const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const sessionId = cfg.validateSessionId(data.session_id);
+  if (!sessionId) return;
+  const mode = cfg.resolveActiveMode(claudeDir, sessionId);
+  if (mode !== 'caveman' && mode !== 'ultracave') return;
+  if (cfg.getGate(data.cwd) === 'off') return;
+  const breach = cfg.readSessionLint(claudeDir, sessionId);
+  const last = breach && breach.violations && breach.violations[0]
+    ? ' Last ' + breach.sink + ' breach: ' + breach.violations[0].rule + ': ' + clip(breach.violations[0].excerpt, 90) + '.'
+    : '';
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: CLOSING_NOTE + last },
+  }));
+}
+
 function handle(raw) {
   const data = JSON.parse(raw);
   const event = data.hook_event_name;
+  if (event === 'PostToolUse') {
+    if (data.tool_name !== WRAP_UP) return;
+    const mods = lazyModules();
+    if (mods) closingReminder(data, mods);
+    return;
+  }
   let tool;
   let input;
   if (event === 'Stop') {
@@ -241,10 +324,11 @@ function handle(raw) {
   const gate = cfg.getGate(data.cwd);
   if (gate === 'off') return;
 
-  const text = sink.extract(input, data.cwd);
+  const text = sink.extract(input, data.cwd, tool);
   if (!text || !text.trim()) return;
   const { violations } = lint(text);
-  const action = sink.action === 'deny' && gate === 'warn' ? 'feedback' : sink.action;
+  const base = typeof sink.action === 'function' ? sink.action(input, data.cwd) : sink.action;
+  const action = base === 'deny' && gate === 'warn' ? 'feedback' : base;
   const counts = cfg.readSessionGate(claudeDir, sessionId);
 
   if (violations.length === 0) {

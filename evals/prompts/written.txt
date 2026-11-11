@@ -1,0 +1,8 @@
+Write the body of a Confluence page that explains our team's code review flow: who reviews, when CI runs, and who merges.
+Draft a Slack message to the team saying the release branch is cut and QA starts tomorrow.
+Write a pull request description for a change that adds retry with backoff to the photo upload queue.
+Write a commit message for a fix that stops a duplicate delivery event being sent after reconnect.
+You just moved a draft page under a new parent, rewrote it, and rendered a chart. Write the closing message to the user.
+Summarise in two or three sentences what changed in a session where you fixed a failing test and opened a PR.
+Write a Jira ticket description for a bug where the app crashes when the camera permission is denied.
+Write a short README section that tells a new teammate how to run the app on an emulator.
